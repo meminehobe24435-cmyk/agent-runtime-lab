@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentlab"
+version = "0.1.0"
+description = "零第三方依赖的 LLM Agent 运行时：工具调用 / 记忆 / RAG / 多智能体 / 评测"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "agent-runtime-lab" }]
+keywords = ["agent", "llm", "function-calling", "rag", "multi-agent", "evaluation"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov>=4.0"]
+
+[project.scripts]
+agentlab = "agentlab.cli:main"
+
+[tool.setuptools]
+packages = ["agentlab"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

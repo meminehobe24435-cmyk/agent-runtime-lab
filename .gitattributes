@@ -1,0 +1,9 @@
+# 统一行尾，避免 Windows 本地开发 + Linux CI 之间产生整文件 diff
+* text=auto
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.txt text eol=lf

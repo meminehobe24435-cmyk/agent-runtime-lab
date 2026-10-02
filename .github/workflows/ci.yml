@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.9", "3.12"]
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: 安装
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: 零第三方依赖自检
+        run: python -c "import agentlab, sys; print('agentlab', agentlab.__version__, '| deps:', [m for m in ('openai','langchain','numpy','chromadb') if m in sys.modules] or 'none')"
+
+      - name: 单元测试
+        run: python -m pytest tests -q
+
+      - name: 评测集（必须全绿）
+        run: python -m agentlab eval --out reports
+
+      - name: 上传评测报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report-${{ matrix.os }}-py${{ matrix.python }}
+          path: reports/
+          if-no-files-found: warn
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 严格编译检查
+        run: python -m compileall -q agentlab tests
+
+      - name: 禁止 stdlib 之外的 import（依赖必须为空）
+        run: |
+          python - <<'PY'
+          import ast, pathlib, sys
+
+          allowed = set(getattr(sys, "stdlib_module_names", ()))
+          if allowed:
+              allowed |= {"agentlab", "__future__"}
+              mode = "按标准库白名单"
+          else:  # Python < 3.10 没有 stdlib_module_names，退化为禁止名单
+              mode = "按第三方禁止名单"
+              forbidden = {
+                  "openai", "anthropic", "langchain", "langchain_core", "llama_index",
+                  "numpy", "pandas", "scipy", "sklearn", "torch", "chromadb",
+                  "requests", "httpx", "aiohttp", "pydantic", "click", "typer",
+                  "rich", "tqdm", "yaml", "dotenv",
+              }
+
+          def is_bad(root: str) -> bool:
+              if allowed:
+                  return root not in allowed and root != "conftest"
+              return root in forbidden
+
+          bad = []
+          files = list(pathlib.Path("agentlab").rglob("*.py")) + list(pathlib.Path("tests").rglob("*.py"))
+          for path in files:
+              tree = ast.parse(path.read_text(encoding="utf-8"))
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Import):
+                      for alias in node.names:
+                          if is_bad(alias.name.split(".")[0]):
+                              bad.append(f"{path}: import {alias.name}")
+                  elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                      if is_bad(node.module.split(".")[0]):
+                          bad.append(f"{path}: from {node.module}")
+          if bad:
+              print("\n".join(bad))
+              raise SystemExit("发现第三方依赖，本项目必须零依赖")
+          print(f"依赖检查通过（{mode}）：{len(files)} 个文件全部只依赖标准库")
+          PY
+
+      - name: CLI 冒烟
+        run: |
+          python -m agentlab tools > /dev/null
+          python -m agentlab run "查一下 cnc-03 的温度指标" > /dev/null
+          python -m agentlab demo > /dev/null
