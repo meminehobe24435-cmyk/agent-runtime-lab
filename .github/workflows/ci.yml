@@ -57,45 +57,50 @@ jobs:
       - name: 严格编译检查
         run: python -m compileall -q agentlab tests
 
-      - name: 禁止 stdlib 之外的 import（依赖必须为空）
+      - name: 依赖检查（运行时零依赖；测试只允许 pytest）
         run: |
           python - <<'PY'
           import ast, pathlib, sys
 
-          allowed = set(getattr(sys, "stdlib_module_names", ()))
-          if allowed:
-              allowed |= {"agentlab", "__future__"}
-              mode = "按标准库白名单"
-          else:  # Python < 3.10 没有 stdlib_module_names，退化为禁止名单
-              mode = "按第三方禁止名单"
-              forbidden = {
-                  "openai", "anthropic", "langchain", "langchain_core", "llama_index",
-                  "numpy", "pandas", "scipy", "sklearn", "torch", "chromadb",
-                  "requests", "httpx", "aiohttp", "pydantic", "click", "typer",
-                  "rich", "tqdm", "yaml", "dotenv",
-              }
+          # agentlab/ 是发布出去的运行时，必须只依赖标准库；
+          # tests/ 允许 pytest，但仍禁止偷偷引入真实模型/向量库把测试喂饱。
+          runtime_forbidden = {
+              "openai", "anthropic", "langchain", "langchain_core", "llama_index",
+              "numpy", "pandas", "scipy", "sklearn", "torch", "chromadb",
+              "requests", "httpx", "aiohttp", "pydantic", "click", "typer",
+              "rich", "tqdm", "yaml", "dotenv",
+          }
+          stdlib = set(getattr(sys, "stdlib_module_names", ()))
+          base_allowed = stdlib | {"agentlab", "__future__"}
 
-          def is_bad(root: str) -> bool:
-              if allowed:
-                  return root not in allowed and root != "conftest"
-              return root in forbidden
+          def is_bad(root: str, is_test: bool) -> bool:
+              if is_test and root in ("pytest", "conftest"):
+                  return False
+              if stdlib:  # Python >= 3.10 有权威标准库名单
+                  return root not in base_allowed
+              return root in runtime_forbidden  # 旧解释器退化为禁止名单
 
-          bad = []
-          files = list(pathlib.Path("agentlab").rglob("*.py")) + list(pathlib.Path("tests").rglob("*.py"))
-          for path in files:
+          bad, runtime_files, test_files = [], [], []
+          for path in sorted(pathlib.Path("agentlab").rglob("*.py")):
+              runtime_files.append(path)
+          for path in sorted(pathlib.Path("tests").rglob("*.py")):
+              test_files.append(path)
+
+          for path, is_test in [(p, False) for p in runtime_files] + [(p, True) for p in test_files]:
               tree = ast.parse(path.read_text(encoding="utf-8"))
               for node in ast.walk(tree):
                   if isinstance(node, ast.Import):
                       for alias in node.names:
-                          if is_bad(alias.name.split(".")[0]):
+                          if is_bad(alias.name.split(".")[0], is_test):
                               bad.append(f"{path}: import {alias.name}")
                   elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-                      if is_bad(node.module.split(".")[0]):
+                      if is_bad(node.module.split(".")[0], is_test):
                           bad.append(f"{path}: from {node.module}")
           if bad:
               print("\n".join(bad))
-              raise SystemExit("发现第三方依赖，本项目必须零依赖")
-          print(f"依赖检查通过（{mode}）：{len(files)} 个文件全部只依赖标准库")
+              raise SystemExit("依赖检查未通过")
+          print(f"依赖检查通过：运行时 {len(runtime_files)} 个文件仅用标准库；"
+                f"测试 {len(test_files)} 个文件仅用 pytest")
           PY
 
       - name: CLI 冒烟
